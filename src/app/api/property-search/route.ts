@@ -1,13 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { researchAddress } from "@/lib/serpapi";
-import { structureReport } from "@/lib/openai";
-import { validateAddress } from "@/lib/validateAddress";
-import type { PropertySearchResponse } from "@/lib/types";
+import { cleanRawMarkdown } from "@/lib/research";
 
 export const runtime = "nodejs";
 
+/**
+ * Researches an address via Google AI Mode (SerpApi) and lightly reformats the
+ * answer for display — same structure and wording AI Mode gave, just with
+ * citation clutter and chat filler removed and key values highlighted. Starts
+ * a continuable conversation so /api/property-chat can ask follow-ups.
+ */
 export async function POST(req: NextRequest) {
-  let body: { address?: unknown; verified?: unknown };
+  let body: { address?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -15,49 +18,52 @@ export async function POST(req: NextRequest) {
   }
 
   const address = typeof body.address === "string" ? body.address.trim() : "";
-  // True only when the client picked this address from the autocomplete dropdown —
-  // i.e. it's already a real, complete address from the geocoder, so we skip the
-  // "does this look complete" heuristic instead of re-guessing at something we
-  // already know for a fact.
-  const isPreVerified = body.verified === true;
-
   if (!address) {
     return NextResponse.json({ error: "An address is required." }, { status: 400 });
   }
-  if (address.length > 300) {
-    return NextResponse.json({ error: "That address looks too long." }, { status: 400 });
-  }
 
-  if (!isPreVerified) {
-    const validation = validateAddress(address);
-    if (!validation.isComplete) {
-      return NextResponse.json(
-        { error: validation.reason, incomplete: true },
-        { status: 400 },
-      );
-    }
+  const serpApiKey = process.env.SERPAPI_KEY;
+  if (!serpApiKey) {
+    return NextResponse.json({ error: "API key is not configured." }, { status: 500 });
   }
 
   try {
-    const research = await researchAddress(address);
-    const report = await structureReport(
-      address,
-      research.taggedText,
-      research.nameToUrl,
-      research.suspectEntities,
-    );
+    const query = [
+      `${address} property details.`,
+      "Number of bedrooms/rooms, square footage, year built,",
+      "current owner name(s), mortgage lender (mortgagee),",
+      "heating and cooling system type, most recent annual property tax amount,",
+      "and distance to the nearest fire hydrant and nearest fire station.",
+      "Check sources like Redfin, Realtor.com, Zillow, and county property records.",
+    ].join(" ");
 
-    const payload: PropertySearchResponse = {
-      address,
-      report,
-      generatedAt: new Date().toISOString(),
-      subsequentRequestToken: research.subsequentRequestToken,
-    };
+    const url = new URL("https://serpapi.com/search.json");
+    url.searchParams.set("engine", "google_ai_mode");
+    url.searchParams.set("q", query);
+    url.searchParams.set("api_key", serpApiKey);
+    url.searchParams.set("continuable", "true");
 
-    return NextResponse.json(payload);
+    const res = await fetch(url.toString(), { cache: "no-store" });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      throw new Error(`SerpApi request failed (${res.status}): ${errText.slice(0, 300)}`);
+    }
+
+    const data: { reconstructed_markdown?: string; subsequent_request_token?: string } = await res.json();
+    if (!data.reconstructed_markdown) {
+      throw new Error("Google AI Mode returned no content for this address.");
+    }
+
+    const cleaned = await cleanRawMarkdown(data.reconstructed_markdown);
+
+    return NextResponse.json({
+      address,
+      markdown: cleaned,
+      subsequentRequestToken: data.subsequent_request_token ?? null,
+    });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unexpected error while researching this address.";
-    console.error("[property-search]", message);
+    const message = err instanceof Error ? err.message : "Unexpected error.";
+    console.error("[raw-test]", message);
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }
