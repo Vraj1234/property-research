@@ -196,7 +196,7 @@ export default function Home() {
       {status === "loading" && (
         <div className="flex items-center gap-3 font-mono text-sm text-ink/50">
           <span className="h-2 w-2 animate-pulse rounded-full bg-clay" />
-          Asking Google AI Mode…
+          Researching this property…
         </div>
       )}
 
@@ -210,7 +210,7 @@ export default function Home() {
         <article className="overflow-hidden rounded-2xl border border-line bg-white/60 shadow-[0_24px_60px_-20px_rgba(23,21,18,0.35)]">
           <header className="border-b border-line bg-ink px-6 py-6 text-parchment sm:px-10">
             <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-parchment/50">
-              Google AI Mode
+              Property Report
             </p>
             <h2 className="mt-1 font-serif text-2xl leading-tight sm:text-3xl">{address}</h2>
           </header>
